@@ -7,16 +7,12 @@ import (
 	"io"
 	"net"
 	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/pilebones/go-udev/netlink"
-	"github.com/pojntfx/go-nbd/pkg/ioctl"
-	"github.com/pojntfx/go-nbd/pkg/protocol"
-	"github.com/pojntfx/go-nbd/pkg/server"
+	"github.com/jinroh/go-nbd/pkg/ioctl"
+	"github.com/jinroh/go-nbd/pkg/protocol"
+	"github.com/jinroh/go-nbd/pkg/server"
 )
 
 const (
@@ -99,85 +95,6 @@ func Connect(conn net.Conn, device *os.File, options *Options) error {
 	}
 
 	fatal := make(chan error)
-	if options.OnConnected != nil {
-		if options.ReadyCheckUdev {
-			udevConn := new(netlink.UEventConn)
-			if err := udevConn.Connect(netlink.UdevEvent); err != nil {
-				return err
-			}
-			defer udevConn.Close()
-
-			var (
-				udevReadyCh = make(chan netlink.UEvent)
-				udevErrCh   = make(chan error)
-				udevQuit    = udevConn.Monitor(udevReadyCh, udevErrCh, &netlink.RuleDefinitions{
-					Rules: []netlink.RuleDefinition{
-						{
-							Env: map[string]string{
-								"DEVNAME": device.Name(),
-							},
-						},
-					},
-				})
-			)
-			defer close(udevQuit)
-
-			go func() {
-				select {
-				case <-udevReadyCh:
-					close(udevQuit)
-
-					options.OnConnected()
-
-					return
-				case err := <-udevErrCh:
-					fatal <- err
-
-					return
-				}
-			}()
-		} else {
-			go func() {
-				sizeFile, err := os.Open(filepath.Join("/sys", "block", filepath.Base(device.Name()), "size"))
-				if err != nil {
-					fatal <- err
-
-					return
-				}
-				defer sizeFile.Close()
-
-				for {
-					if _, err := sizeFile.Seek(0, io.SeekStart); err != nil {
-						fatal <- err
-
-						return
-					}
-
-					rsize, err := io.ReadAll(sizeFile)
-					if err != nil {
-						fatal <- err
-
-						return
-					}
-
-					size, err := strconv.ParseInt(strings.TrimSpace(string(rsize)), 10, 64)
-					if err != nil {
-						fatal <- err
-
-						return
-					}
-
-					if size > 0 {
-						options.OnConnected()
-
-						return
-					}
-
-					time.Sleep(options.ReadyCheckPollInterval)
-				}
-			}()
-		}
-	}
 
 	if _, _, err := syscall.Syscall(
 		syscall.SYS_IOCTL,
